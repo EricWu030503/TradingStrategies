@@ -1,6 +1,7 @@
 import yfinance as yf
 import matplotlib.pyplot as plt
 from statsmodels.tsa.stattools import coint
+import numpy as np
 
 currency_pairs = [
     'EURUSD=X', 'GBPUSD=X', 'AUDUSD=X', 'NZDUSD=X',
@@ -67,11 +68,13 @@ def generate_signals(df, pair1, pair2, window=20):
 
     return df
 
-def backtest(df, pair1, pair2):
+def backtest(df, pair1, pair2, leverage = 10):
     base_currency1 = pair1[0:3]
     base_currency2 = pair2[0:3]
 
-    cash_balances = {'USD': 10000, base_currency1: 0, base_currency2: 0}
+    initial_USD_cash = 10000
+    borrowed_amount = initial_USD_cash * (leverage - 1)
+    cash_balances = {'USD': initial_USD_cash * leverage, base_currency1: 0, base_currency2: 0}
 
     df['Portfolio_Value'] = 0
     df['USD'] = 0
@@ -119,25 +122,36 @@ def backtest(df, pair1, pair2):
             cash_balances['USD'] += cash_balances[base_currency1] * price_pair1
             cash_balances[base_currency1] = 0
 
-        df.loc[df.index[i], 'USD'] = cash_balances['USD']
+        df.loc[df.index[i], 'USD'] = cash_balances['USD']-borrowed_amount
         df.loc[df.index[i], base_currency2] = cash_balances[base_currency2]
         df.loc[df.index[i], base_currency1] = cash_balances[base_currency1]
 
         # Update the portfolio value in USD
         df.loc[df.index[i], 'Portfolio_Value'] = cash_balances['USD'] + \
                                                  cash_balances[base_currency1] * price_pair1 + \
-                                                 cash_balances[base_currency2] * price_pair2
+                                                 cash_balances[base_currency2] * price_pair2 - borrowed_amount
 
     # Calculate returns
     print(f'{base_currency1}/USD and {base_currency2}/USD：')
-    total_return = (df['Portfolio_Value'].iloc[-1] / df['Portfolio_Value'].iloc[0] - 1) * 100
-    print(f"Total Return: {total_return:.2f}%")
+    total_return = (df['Portfolio_Value'].iloc[-1] / df['Portfolio_Value'].iloc[0] - 1)
+    print(f"Total Return: {total_return * 100:.2f}%")
 
     # Calculate annualized return
     num_days = (df.index[-1] - df.index[0]).days
-    annualized_return = ((1 + total_return / 100) ** (365 / num_days) - 1) * 100
-    print(f"Annualized Return: {annualized_return:.2f}%")
-    print(' ')
+    annualized_return = ((1 + total_return) ** (365 / num_days) - 1)
+    print(f"Annualized Return: {annualized_return * 100:.2f}%")
+
+    # Calculate annualized volatility
+    df['Daily_Return'] = df['Portfolio_Value'].pct_change()
+    annualized_volatility = np.std(df['Daily_Return']) * np.sqrt(252)  # Assuming 252 trading days in a year
+    print(f"Annualized Volatility: {annualized_volatility*100:.2f}%")
+
+    # Calculate Sharpe Ratio
+    risk_free_rate = 0.01
+    sharpe_ratio = (annualized_return - risk_free_rate) / annualized_volatility
+    print(f"Sharpe Ratio: {sharpe_ratio}")
+    print(" ")
+
 
 def plot_performance(df, pair1, pair2):
     # Create a figure with a specified size
@@ -184,8 +198,10 @@ def plot_performance(df, pair1, pair2):
 
 start_date = input("Please input the start date for backtesting (format: yyyy-mm-dd): ")
 end_date = input("Please input the end date for backtesting (format: yyyy-mm-dd): ")
+print(" ")
 
 cointegrated_pairs = find_cointegrated_pairs(currency_pairs, start_date, end_date)
+print(' ')
 
 if cointegrated_pairs:
     for df, pair1, pair2 in cointegrated_pairs:
